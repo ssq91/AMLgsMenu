@@ -11,6 +11,7 @@
 #include "ap_tcp_client.h"
 #include "command_templates.h"
 #include "terminal.h"
+#include "ui_theme.h"
 
 #include <algorithm>
 #include <cmath>
@@ -267,19 +268,58 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     ImGui::StyleColorsDark();
+    ui::ApplyGlobalStyle();
     io.MouseDrawCursor = false;
 
     const float base_size = 26.0f; // larger base size for readability
     const bool is_zc0005 = (!font_path.empty() &&
                             font_path.find("ZC0005-Regular-2.ttf") != std::string::npos);
-    const float ui_size = is_zc0005 ? base_size : (base_size * 1.2f);
-    if (!font_path.empty())
+    // Scale the base size with the actual screen height so 720p panels do not
+    // overflow. 1080p -> 31px, 720p -> 21px. Rounded to whole pixels to avoid
+    // fractional-pixel glyph rasterisation blur.
+    const float screen_h = static_cast<float>(display_platform_.height() > 0
+                                                  ? display_platform_.height()
+                                                  : 1080);
+    const float size_scale = screen_h / 1080.0f;
+    const float ui_size = is_zc0005 ? base_size
+                                    : static_cast<float>(static_cast<int>(
+                                          std::max(20.0f, base_size * 1.2f * size_scale + 0.5f)));
+    ImGui::GetStyle().FontSizeBase = ui_size;
+
+    // Font resolution order:
+    //   1. explicit -t <path>            (user override, wins always)
+    //   2. assets/GSMono-NERV.ttf next to the executable (bundled mono CJK)
+    //   3. /storage/digitalfpv/fonts/GSMono-NERV.ttf (deployed copy)
+    //   4. ImGui built-in default        (ASCII only, last resort)
+    std::string resolved_font = font_path;
+    if (resolved_font.empty())
     {
-        ui_font_ = io.Fonts->AddFontFromFileTTF(font_path.c_str(), ui_size);
+        for (const char *candidate : {"assets/GSMono-NERV.ttf",
+                                      "/storage/digitalfpv/fonts/GSMono-NERV.ttf",
+                                      "GSMono-NERV.ttf"})
+        {
+            std::ifstream probe(candidate, std::ios::binary);
+            if (probe.good())
+            {
+                resolved_font = candidate;
+                break;
+            }
+        }
     }
-    else
+    if (!resolved_font.empty())
+    {
+        ui_font_ = io.Fonts->AddFontFromFileTTF(resolved_font.c_str(), ui_size);
+        if (ui_font_)
+        {
+            std::fprintf(stderr, "[AMLgsMenu] UI font: %s @ %.0fpx\n",
+                         resolved_font.c_str(), ui_size);
+        }
+    }
+    if (!ui_font_)
     {
         ui_font_ = io.Fonts->AddFontDefault();
+        std::fprintf(stderr, "[AMLgsMenu] WARNING: GSMono-NERV.ttf not found, "
+                             "falling back to built-in font (CJK will not render)\n");
     }
     if (!ui_font_)
     {
@@ -289,9 +329,9 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
     {
         terminal_font_ = io.Fonts->AddFontFromFileTTF(terminal_font_path.c_str(), base_size);
     }
-    else if (!font_path.empty())
+    else if (!resolved_font.empty())
     {
-        terminal_font_ = io.Fonts->AddFontFromFileTTF(font_path.c_str(), base_size);
+        terminal_font_ = io.Fonts->AddFontFromFileTTF(resolved_font.c_str(), base_size);
     }
     if (!terminal_font_)
     {
@@ -394,10 +434,15 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
                     data.ground_signal_a = snap.ground_signal.signal_a;
                     data.ground_signal_b = snap.ground_signal.signal_b;
                 }
-                if (snap.packet_rate.valid && snap.packet_rate.primary_mbps > 0.0f)
+                if (snap.packet_rate.valid)
                 {
+                    // STA 模式：primary_mbps 是 rx_bytes 增量算出的真实吞吐，
+                    // 即使为 0 也要照实显示（没流量就是 0），不要用别的值糊上去。
                     data.bitrate_mbps = snap.packet_rate.primary_mbps;
-                    if (settings_controller_)
+                    data.link_sta = snap.packet_rate.sta_mode;
+                    data.link_phy_mbps = snap.packet_rate.phy_mbps;
+                    data.link_freq_mhz = snap.packet_rate.freq_mhz;
+                    if (snap.packet_rate.primary_mbps > 0.0f && settings_controller_)
                     {
                         settings_controller_->RequestIdrFrame();
                     }
@@ -406,10 +451,11 @@ bool Application::Initialize(const std::string &font_path, bool use_mock,
                 {
                     data.ground_temp_c = snap.ground_temp_c;
                 }
-                if (snap.output_fps > 0)
-                {
-                    data.video_refresh_hz = snap.output_fps;
-                }
+                // 注意：snap.output_fps 是 Amlogic 解码器的输出帧率（/sys/class/video/fps_info
+                // 的 output_fps，十六进制），它会随丢帧剧烈抖动（实测 55~59 跳变），
+                // 不是视频流的编码帧率。之前把它直接当成 OSD 上的 "@xxHz" 显示，
+                // 正是"44Hz 不准"的来源。这里不再覆盖 video_refresh_hz，
+                // 让它保持为菜单配置的输出模式帧率（与 /sys/class/display/mode 一致）。
                 if (snap.has_hid_batt)
                 {
                     data.has_ground_batt = true;

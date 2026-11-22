@@ -21,6 +21,14 @@ struct PacketRateSnapshot {
     float secondary_mbps = 0.0f;
     bool valid = false;
     std::chrono::steady_clock::time_point timestamp = std::chrono::steady_clock::time_point::min();
+
+    // ---- STA 模式附加信息（wfb 模式下保持默认值）----
+    // STA 模式下主码率由 rx_bytes 增量算出，是真实应用层吞吐；
+    // phy_mbps 是 iw 报的协商速率（含空口开销，通常远高于码率）。
+    bool sta_mode = false;
+    float phy_mbps = 0.0f;
+    int freq_mhz = 0;
+    int signal_dbm = 0;
 };
 
 class SignalMonitor {
@@ -40,7 +48,7 @@ private:
     };
 
     bool UpdateSnapshot();
-    bool UpdateSnapshotFromApLink();
+    bool UpdateSnapshotFromStaLink();
     void ProcessEntry(pid_t pid, const std::string &message,
                       std::map<uint64_t, float> &antenna_data,
                       bool &saw_pkt,
@@ -49,7 +57,7 @@ private:
                       uint64_t &last_ts);
     static std::vector<std::string> SplitString(const std::string &line, char delim);
     static std::string TrimCopy(const std::string &text);
-    static bool ReadApModeConfig(bool &ap_mode_enabled, std::string &wlan_name);
+    static bool ReadLinkConfig(bool &sta_mode, std::string &wlan_name);
     static std::optional<float> ParseSignalDbm(const std::string &line);
     static std::optional<float> ParseBitrateMbps(const std::string &line);
 
