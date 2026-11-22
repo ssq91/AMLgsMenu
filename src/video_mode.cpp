@@ -140,6 +140,39 @@ std::vector<VideoMode> DefaultSkyModes() {
     };
 }
 
+// 从 "1080p60hz" 这类标签里取出 "1080p60" 的紧凑写法。
+// 若标签不含可识别的分辨率前缀，则退回完整标签。
+std::string FormatVideoModeCompact(const VideoMode &mode) {
+    // 目标形式：
+    //   "1080p60hz"            -> "1080p60"
+    //   "1920x1080@120Hz"      -> "1080p120"   （从宽高与刷新率重建，更短更规范）
+    //   "1920x1080@60Hz-fps"   -> "1080p60"
+    // 若宽高/刷新率缺失，则对 label 做保守清理。
+    if (mode.width > 0 && mode.height > 0 && mode.refresh > 0) {
+        std::ostringstream os;
+        os << mode.height << "p" << mode.refresh;
+        return os.str();
+    }
+
+    std::string s = mode.label;
+    if (s.size() > 2 && s.compare(s.size() - 2, 2, "hz") == 0) {
+        s.erase(s.size() - 2);
+    } else if (s.size() > 2 && s.compare(s.size() - 2, 2, "Hz") == 0) {
+        s.erase(s.size() - 2);
+    }
+    const auto paren = s.find('(');
+    if (paren != std::string::npos) {
+        s.erase(paren);
+    }
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) {
+        s.pop_back();
+    }
+    if (s.empty()) {
+        return mode.label;
+    }
+    return s;
+}
+
 std::string FormatVideoModeLabel(const VideoMode &mode) {
     std::ostringstream os;
     os << mode.label;

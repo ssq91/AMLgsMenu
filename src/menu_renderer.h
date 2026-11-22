@@ -4,6 +4,7 @@
 #include "wifi_controller.h"
 
 #include "imgui.h"
+#include "ui_theme.h"
 
 #include <functional>
 #include <chrono>
@@ -44,6 +45,10 @@ public:
         float bitrate_mbps = 0.0f;
         std::string video_resolution;
         int video_refresh_hz = 0;
+        // STA 模式链路信息（wfb 模式下保持默认）
+        bool link_sta = false;
+        float link_phy_mbps = 0.0f;
+        int link_freq_mhz = 0;
         float cell_voltage = 0.0f;
         float pack_voltage = 0.0f;
         bool cell_voltage_estimated = false;
@@ -73,6 +78,18 @@ private:
     void DrawMenu(const ImGuiViewport *viewport, bool &running_flag);
     bool LoadIcon(const char *path, ImTextureID &out_id, int &out_w, int &out_h);
 
+    // ---- NERV 终端风格菜单布局（P1：只做皮肤与布局，不改业务逻辑）----
+    // 图标栏分两趟：先提交 item（确定焦点/选中分组），再统一绘制，避免焦点变化当帧双高亮。
+    void SubmitRailItems(const ui::Metrics &m,
+                         const std::function<void(const std::function<void()> &)> &reg);
+    void DrawRailItem(int group, const ui::Metrics &m);
+    // 绘制当前分组（rail_group_）的全部设置行。
+    // focus_index / focused_index 由本函数推进；last_index 由 reg 闭包自行维护，故不在此传入。
+    // kodi_popup_requested / running_flag 由行内控件回写，故必须按引用传入。
+    void DrawGroupRows(const ui::Metrics &m, int &focus_index, int &focused_index,
+                       const std::function<void(const std::function<void()> &)> &reg,
+                       bool &kodi_popup_requested, bool &running_flag);
+
     MenuState &state_;
     // Application &application_;
     bool use_mock_ = true;
@@ -81,14 +98,6 @@ private:
     float last_osd_update_time_ = -1.0f;
     std::chrono::steady_clock::time_point last_osd_tp_{};
     bool has_mavlink_data_ = false;
-    ImTextureID icon_antenna_{};
-    ImTextureID icon_batt_cell_{};
-    ImTextureID icon_batt_pack_{};
-    ImTextureID icon_gps_{};
-    ImTextureID icon_speed_{};
-    ImTextureID icon_monitor_{};
-    ImTextureID icon_temp_air_{};
-    ImTextureID icon_temp_ground_{};
     std::function<void()> toggle_terminal_;
     std::function<bool()> terminal_visible_;
     std::function<void(const std::string &)> start_update_;
@@ -116,10 +125,13 @@ private:
     WifiStatus wifi_live_status_{};
     int wifi_pwd_focus_ = 0;
     int pending_focus_index_ = -1;
-    int last_focus_index_ = -1;
-    std::array<std::vector<int>, 2> last_focus_columns_{};
-    std::vector<int> last_focus_index_to_col_;
-    std::vector<int> last_focus_index_to_pos_;
+    // ---- 贴边布局状态 ----
+    int rail_group_ = 0;                                // 当前分组 0..4
+    int panel_row_memory_[5] = {-1, -1, -1, -1, -1};    // 每组上次停留的行（焦点链内偏移）
+    int panel_first_row_ = -1;                          // 本组第一行的焦点序号（行可能不可用，故不能写死 5）
+    // 权威焦点序号：菜单窗口带 NoNavInputs，ImGui 不再自己处理方向键，
+    // 焦点位置完全由本类的语义表决定，只有本类会改这个值。
+    int nav_cursor_ = -1;
     bool menu_visible_last_ = false;
     int kodi_popup_focus_index_ = 0;
     bool kodi_popup_focus_dirty_ = false;
