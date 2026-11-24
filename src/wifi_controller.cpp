@@ -22,7 +22,6 @@ namespace
 
 constexpr const char kConnmanConf[] = "/storage/.config/connman_main.conf";
 constexpr const char kWfbConf[] = "/storage/digitalfpv/wfb.conf";
-constexpr const char kOpenipcConf[] = "/storage/openipc_sta.conf";
 constexpr const char kSysNet[] = "/sys/class/net";
 
 // ---------------- 基础工具 ----------------
@@ -503,16 +502,8 @@ std::string WifiController::ConfiguredSsid()
             }
         }
     }
-    // 退回旧的 supplicant 配置
-    std::string raw = ReadFileStr(kOpenipcConf);
-    size_t p = raw.find("ssid=\"");
-    if (p != std::string::npos)
-    {
-        size_t s = p + 6;
-        size_t e = raw.find('"', s);
-        if (e != std::string::npos)
-            return raw.substr(s, e - s);
-    }
+    // 不再回退 openipc_sta.conf：修复方案要求用户 Wi-Fi 只由
+    // ConnMan service（[service_AMLgsMenu]）提供，旁路 supplicant 配置必须移除。
     return {};
 }
 

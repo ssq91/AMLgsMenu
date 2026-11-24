@@ -1851,7 +1851,12 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                 std::vector<WifiAp> got;
                 bool scanning = false;
                 if (wifi_.PollScan(&got, &scanning))
+                {
                     wifi_aps_ = std::move(got);
+                    // 重新扫描后 AP 数量可能变少，钳制选中项，防越界
+                    if (wifi_ap_idx_ >= static_cast<int>(wifi_aps_.size()))
+                        wifi_ap_idx_ = 0;
+                }
                 wifi_scanning_ = scanning;
             }
             // 后台连接结果
@@ -2057,6 +2062,7 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                 {
                     std::snprintf(wifi_client_ssid_, sizeof(wifi_client_ssid_), "%s",
                                   wifi_aps_[wifi_ap_idx_].ssid.c_str());
+                    wifi_pwd_focus_ = 1;   // 首次进入密码页就让输入框拿到键盘焦点
                     wifi_step_ = 2;
                 }
                 ImGui::SameLine();
