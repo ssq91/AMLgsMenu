@@ -63,11 +63,16 @@ public:
     void StartScan(const std::string &iface);
     // 返回 true 表示取到了新结果（取走后清空）
     bool PollScan(std::vector<WifiAp> *out, bool *scanning);
+    // 上一次扫描没能做的原因（网卡没被 ConnMan 接管）；正常时为空串。
+    static std::string ScanNote();
 
     // ---- 连接（后台）----
     void StartConnect(const std::string &ssid, const std::string &psk, const std::string &iface);
     // 返回 true 表示连接流程已结束（成功或失败）
     bool PollConnect(bool *ok, std::string *message, bool *running);
+    // 连接进行到哪一步了（定位 / 提交 / 关联 / 取地址），供 UI 在"正在连接"下显示。
+    // 没有连接在进行时返回空串。
+    static std::string ConnectProgress();
 
     // ---- 连接（同步，供切换网络模式等非 UI 路径使用）----
     static bool ConnectSync(const std::string &ssid, const std::string &psk,

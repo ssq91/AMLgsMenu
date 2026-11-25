@@ -401,7 +401,7 @@ inline void DialogTitle(const char *title, const char *subtitle = nullptr)
 // 右对齐按钮行。cancel_label 传 nullptr 表示只有一个主按钮（此时它靠右）。
 // 返回 1 = 取消被按，2 = 主按钮被按，0 = 都没按。
 inline int DialogButtons(const char *cancel_label, const char *ok_label,
-                         bool ok_enabled = true)
+                         bool ok_enabled = true, bool focus_primary = false)
 {
     const Metrics m = ComputeMetrics(ImGui::GetMainViewport());
 
@@ -447,6 +447,10 @@ inline int DialogButtons(const char *cancel_label, const char *ok_label,
     ImGui::PushStyleColor(ImGuiCol_Text, kInk);
     if (!ok_enabled)
         ImGui::BeginDisabled();
+    // 请求焦点必须在 Button 之前：SetKeyboardFocusHere() 只对下一个
+    // ItemAdd 生效，放在 Button 之后会指向后续的元素。
+    if (focus_primary && ok_enabled)
+        ImGui::SetKeyboardFocusHere();
     const bool ok_pressed = ImGui::Button(ok_label, ImVec2(ok_w, h));
     if (ok_enabled)
         ImGui::SetItemDefaultFocus(); // Enter 直接触发主按钮

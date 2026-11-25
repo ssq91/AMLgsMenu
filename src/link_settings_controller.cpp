@@ -435,8 +435,11 @@ void LinkSettingsController::ApplyAdaptiveLink()
 
 // Wi-Fi 连接方式与 kodi 一致：kodi 自己不碰 wpa_supplicant，
 // 而是把「要连哪个 AP」交给 ConnMan，由 ConnMan 驱动 wpa_supplicant
-// 完成关联与 DHCP。这里通过 WifiController::ConnectSync 走同一路径：
-//   写 service_ 配置 -> restart connman -> 显式 connmanctl connect。
+// 完成关联与 DHCP。这里通过 WifiController::ConnectSync 走同一路径，
+// 与 Wi-Fi 向导里点"连接"完全一致（D-Bus 调 Service.Connect，等 State 到 ready）。
+// 这条入口不带密码：密码是用户在向导里输入后由 ConnMan 自己存盘的，
+// 这里只对"已保存过密码的热点"发起连接；没存过密码时 ConnectSync 会直接
+// 给出提示，不会空等。
 // 注意必须显式 connect：只 restart connman 时 autoconnect 常不触发，
 // 实测热重启后等 65s 仍停在 idle，链路不会自己起来。
 void LinkSettingsController::ApplyNetworkMode()

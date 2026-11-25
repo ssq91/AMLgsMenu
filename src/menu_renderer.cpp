@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cmath>
 #include <sstream>
+#include <cstring>
 #include <string>
 #include <utility>
 #include <vector>
@@ -1901,20 +1902,35 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
             // 步骤 1/2 的按钮超过两个，无法塞进 DialogButtons（右对齐双键）。
             // 这里用与 DialogButtons 完全相同的尺寸与配色手绘，保持整机观感统一。
             const ui::Metrics dm = ui::ComputeMetrics(ImGui::GetMainViewport());
-            auto ghost_button = [&](const char *label) -> bool
+            // 焦点框：与键盘一致，自绘内缩描边（ImGui 的 NavCursor 会向外扩，撑大布局）
+            auto focus_ring = [&](ImU32 col)
+            {
+                if (!ImGui::IsItemFocused())
+                    return;
+                const ImVec2 a = ImGui::GetItemRectMin();
+                const ImVec2 b = ImGui::GetItemRectMax();
+                ImGui::GetWindowDrawList()->AddRect(ImVec2(a.x + 1.0f, a.y + 1.0f),
+                                                   ImVec2(b.x - 1.0f, b.y - 1.0f),
+                                                   col, 0.0f, 0, 2.0f);
+            };
+            // width = 0 表示用默认宽度；传正值可让调用方按网格精确分配。
+            auto ghost_button = [&](const char *label, float width = 0.0f) -> bool
             {
                 ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(0, 0, 0, 0));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ui::kAmberSoft);
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, ui::kBtnActive);
                 ImGui::PushStyleColor(ImGuiCol_Text, ui::kAmberData);
                 ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
-                const bool hit = ImGui::Button(label, ImVec2(112.0f * dm.k, 40.0f * dm.k));
+                const bool hit = ImGui::Button(
+                    label, ImVec2(width > 0.0f ? width : 112.0f * dm.k, 40.0f * dm.k));
                 ImGui::PopStyleVar();
                 ImGui::PopStyleColor(4);
+                focus_ring(ui::kAmber);
                 return hit;
             };
             // 主按钮（实心琥珀 + 黑字），用于「下一步 / 连接 / 完成」这类推进动作
-            auto primary_button = [&](const char *label, bool enabled = true) -> bool
+            auto primary_button = [&](const char *label, bool enabled = true,
+                                      float width = 0.0f) -> bool
             {
                 if (!enabled)
                     ImGui::BeginDisabled();
@@ -1922,10 +1938,13 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ui::kAmberData);
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, ui::kAmberLabel);
                 ImGui::PushStyleColor(ImGuiCol_Text, ui::kInk);
-                const bool hit = ImGui::Button(label, ImVec2(132.0f * dm.k, 40.0f * dm.k));
+                const bool hit = ImGui::Button(
+                    label, ImVec2(width > 0.0f ? width : 132.0f * dm.k, 40.0f * dm.k));
                 ImGui::PopStyleColor(4);
                 if (!enabled)
                     ImGui::EndDisabled();
+                // 实心琥珀底上用黑框，否则焦点框和底色融在一起看不见
+                focus_ring(ui::kInk);
                 return hit;
             };
 
@@ -1969,8 +1988,15 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                 ImGui::Spacing();
 
                 bool can_next = !wifi_ifaces_.empty();
-                const int choice = ui::DialogButtons(is_cn ? "\u53d6\u6d88" : "Cancel",
-                                                     is_cn ? "\u4e0b\u4e00\u6b65" : "Next", can_next);
+                int choice = ui::DialogButtons(is_cn ? "\u53d6\u6d88" : "Cancel",
+                                                     is_cn ? "\u4e0b\u4e00\u6b65" : "Next", can_next,
+                                                     ImGui::IsWindowAppearing() && can_next);
+                // 主窗口带 NoNavInputs，弹窗内 ImGui 原生导航实测不生效（按 OK 无反应）。
+                // 这里显式检测 Enter 兜底，保证遥控器能一键推进。
+                if (choice == 0 && can_next &&
+                    (ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
+                     ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false)))
+                    choice = 2;
                 if (choice == 2)
                 {
                     wifi_.SetIface(wifi_ifaces_[wifi_iface_idx_].name);
@@ -2006,9 +2032,15 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                 }
                 else if (wifi_aps_.empty())
                 {
+                    // 网卡没被 ConnMan 接管时不是"没扫到热点"，照实说
+                    const bool no_card = !WifiController::ScanNote().empty();
                     ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "%s",
-                        is_cn ? "\u672a\u626b\u5230\u70ed\u70b9\uff08\u8be5\u7f51\u5361\u9891\u6bb5\u53ef\u80fd\u4e0d\u8986\u76d6\u76ee\u6807 AP\uff09"
-                              : "No AP found (this card's band may not cover the target AP)");
+                        no_card
+                            ? (is_cn
+                                ? "\u0057\u0069\u002d\u0046\u0069 \u7f51\u5361\u6ca1\u6709\u88ab ConnMan \u63a5\u7ba1\uff0c\u65e0\u6cd5\u626b\u63cf\uff08\u8bf7\u91cd\u542f\u8bbe\u5907\uff09"
+                                : "Wi-Fi card is not managed by ConnMan (reboot)")
+                            : (is_cn ? "\u672a\u626b\u5230\u70ed\u70b9\uff08\u8be5\u7f51\u5361\u9891\u6bb5\u53ef\u80fd\u4e0d\u8986\u76d6\u76ee\u6807 AP\uff09"
+                              : "No AP found (this card's band may not cover the target AP)"));
                 }
                 else
                 {
@@ -2058,63 +2090,258 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                 }
                 ImGui::SameLine();
                 bool has_ap = !wifi_aps_.empty();
-                if (primary_button(is_cn ? "\u4e0b\u4e00\u6b65" : "Next", has_ap))
+                // 主窗口 NoNavInputs 让弹窗内 ImGui 导航不生效，
+                // 这里显式检测 Enter。三个按钮先全部提交（保证 SameLine 布局），
+                // 再统一判定：Enter 优先推进，避免焦点在“上一步”时被它抢走。
+                const bool enter_step1 = has_ap &&
+                    (ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
+                     ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false));
+                const bool hit_next = primary_button(is_cn ? "\u4e0b\u4e00\u6b65" : "Next", has_ap);
+                ImGui::SameLine();
+                const bool hit_back = ghost_button(is_cn ? "\u4e0a\u4e00\u6b65" : "Back");
+                ImGui::SameLine();
+                const bool hit_cancel = ghost_button(is_cn ? "\u53d6\u6d88" : "Cancel");
+
+                if (hit_next || enter_step1)
                 {
                     std::snprintf(wifi_client_ssid_, sizeof(wifi_client_ssid_), "%s",
                                   wifi_aps_[wifi_ap_idx_].ssid.c_str());
-                    wifi_pwd_focus_ = 1;   // 首次进入密码页就让输入框拿到键盘焦点
+                    // 进入密码页：请求把导航焦点交给软键盘第一个键。
+                    // 这里置位、由 draw_row 在提交首个键之前消费一次（见 first_key_focus）。
+                    wifi_kbd_pending_focus_ = 1;
                     wifi_step_ = 2;
                 }
-                ImGui::SameLine();
-                if (ghost_button(is_cn ? "\u4e0a\u4e00\u6b65" : "Back"))
+                else if (hit_back)
                 {
                     wifi_step_ = 0;
                     wifi_ifaces_.clear();
                 }
-                ImGui::SameLine();
-                if (ghost_button(is_cn ? "\u53d6\u6d88" : "Cancel"))
+                else if (hit_cancel)
                 {
                     wifi_step_ = 0;
                     ImGui::CloseCurrentPopup();
                 }
             }
 
-            // ---- 步骤 2：输密码 ----
+            // ---- 步骤 2：输密码（遥控器软键盘）----
             else if (wifi_step_ == 2)
             {
+                // 统一 10 列网格：所有行（含功能行）总宽严格相等 = 10*key_w + 9*gap。
+                // 令 u = key_w + gap（一个列宽单位），则：
+                //   字符行 10 个键 → 10*key_w + 9*gap = 10u - gap
+                //   功能行 5 个键 → 各键宽 = 系数*u - gap，系数和 = 10.0，
+                //                   合计 = 10u - 5gap + 4gap = 10u - gap，与字符行完全一致。
+                // 密码框宽度也取同一个 kbd_w，保证输入框与键盘左右边界对齐。
+                const float key_w = 44.0f * dm.k;
+                const float key_h = 40.0f * dm.k;
+                const float gap   = 5.0f * dm.k;
+                const float u     = key_w + gap;
+                const int   cols  = 10;
+                const float kbd_w = cols * key_w + (cols - 1) * gap;
+
                 ImGui::Text(is_cn ? "\u76ee\u6807\u70ed\u70b9\uff1a%s" : "Target AP: %s", wifi_client_ssid_);
                 ImGui::Spacing();
+
+                // 密码显示框：只读。字符只由软键盘写入（遥控器没有字母键）。
+                // 关键：绝不能让 InputText 参与导航，否则它会抢走弹窗焦点，
+                // 导致方向键/OK 在软键盘上完全失效（真机 192.168.0.38 已复现）。
                 ImGui::TextUnformatted(is_cn ? "\u5bc6\u7801" : "Password");
-                ImGui::SetNextItemWidth(420);
-                if (wifi_pwd_focus_ == 1)
-                {
-                    ImGui::SetKeyboardFocusHere();
-                    wifi_pwd_focus_ = 0;
-                }
-                bool enter = ImGui::InputText("##password", wifi_client_password_,
-                                              sizeof(wifi_client_password_),
-                                              ImGuiInputTextFlags_Password |
-                                              ImGuiInputTextFlags_EnterReturnsTrue);
+                // 宽度与软键盘严格同宽（kbd_w），左右边界对齐；
+                // kbd_w 已经按 dm.k 缩放，1280x720 下不会溢出弹窗。
+                ImGui::SetNextItemWidth(kbd_w);
+                ImGui::InputText("##password", wifi_client_password_,
+                                 sizeof(wifi_client_password_),
+                                 ImGuiInputTextFlags_Password | ImGuiInputTextFlags_ReadOnly);
+
+                // ---- 软键盘 ----
+                // 遥控器只有方向键 + Enter；弹窗不继承主窗口的 NoNavInputs，
+                // ImGui 原生导航会在下面的按钮网格里移动焦点，Enter 激活当前按钮。
+                ImGui::Spacing();
                 ImGui::TextDisabled("%s", is_cn
-                    ? "\uff08\u5f00\u653e\u70ed\u70b9\u7559\u7a7a\u5373\u53ef\uff09"
-                    : "(leave empty for open network)");
+                    ? "\u65b9\u5411\u952e\u79fb\u52a8\uff0cOK \u952e\u8f93\u5165\uff08\u5f00\u653e\u70ed\u70b9\u7559\u7a7a\u5373\u53ef\uff09"
+                    : "D-pad to move, OK to type (leave empty for open network)");
+                ImGui::Spacing();
+
+                // 追加一个字符到密码 buffer（留 1 字节给 '\0'）
+                auto append_char = [&](char c) {
+                    size_t len = std::strlen(wifi_client_password_);
+                    if (len + 1 < sizeof(wifi_client_password_))
+                    {
+                        wifi_client_password_[len] = c;
+                        wifi_client_password_[len + 1] = '\0';
+                    }
+                };
+                auto backspace_char = [&]() {
+                    size_t len = std::strlen(wifi_client_password_);
+                    if (len)
+                        wifi_client_password_[len - 1] = '\0';
+                };
+
+                // 键盘按键样式：与整机三档琥珀一致。
+                // 用显式 size，避免 ImGui 按标签文字宽度撑开导致列宽不齐。
+                // 焦点提示：不用 ImGui 的 NavCursor —— 它默认向外扩 4.5px，
+                // 会把行高撑大、破坏 10 列网格的等宽对齐（实测行高从 40 变 51）。
+                // 改为按键画完后自绘一圈内缩 1px 的琥珀框，几何零影响。
+                auto key_button = [&](const char *label, float width) -> bool
+                {
+                    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(0, 0, 0, 0));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ui::kAmberSoft);
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ui::kBtnActive);
+                    ImGui::PushStyleColor(ImGuiCol_Text, ui::kAmberLabel);
+                    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+                    const bool hit = ImGui::Button(label, ImVec2(width, key_h));
+                    ImGui::PopStyleVar();
+                    ImGui::PopStyleColor(4);
+
+                    // 焦点框：画在按键内部（不外扩），高亮当前键
+                    if (ImGui::IsItemFocused())
+                    {
+                        const ImVec2 a = ImGui::GetItemRectMin();
+                        const ImVec2 b = ImGui::GetItemRectMax();
+                        ImGui::GetWindowDrawList()->AddRect(
+                            ImVec2(a.x + 1.0f, a.y + 1.0f),
+                            ImVec2(b.x - 1.0f, b.y - 1.0f),
+                            ui::kAmber, 0.0f, 0, 2.0f);
+                    }
+                    return hit;
+                };
+
+                // 进入密码页：把导航焦点明确交给软键盘第一个键。
+                // 必须在第一个 Button 提交之前调用 SetKeyboardFocusHere，
+                // 这样焦点落在按键网格上（而非被只读输入框/底部按钮抢走）。
+                auto first_key_focus = [&]() {
+                    if (wifi_kbd_pending_focus_ > 0)
+                    {
+                        ImGui::SetKeyboardFocusHere();
+                        // SetKeyboardFocusHere 内部带 ImGuiNavMoveFlags_NoSetNavCursorVisible，
+                        // 不会让焦点框显示出来；而 NavActivateId 的赋值要求 NavCursorVisible 为真，
+                        // 否则「刚进密码页直接按 OK」会被吞掉（实测首次 Enter 无效）。
+                        // 这里显式置为可见，保证一进页面就能直接按 OK 输入。
+                        ImGui::SetNavCursorVisible(true);
+                        --wifi_kbd_pending_focus_;
+                    }
+                };
+
+                // 键盘整体左边界：所有行共用同一个起点，保证左右边缘对齐。
+                const float kbd_x = ImGui::GetCursorPosX();
+                const ImVec2 kbd_screen0 = ImGui::GetCursorScreenPos();
+
+                // 第 1 行：数字
+                const char *row_num[] = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0"};
+                // 第 2 行：Wi-Fi 密码高频符号
+                const char *row_sym[] = {"!", "@", "#", "$", "%", "^", "&", "*", "(", ")"};
+                // 第 3~5 行：字母（SHIFT 只影响这三行）+ 补满 10 列的 _ - . /
+                const char *row_q_l[] = {"q", "w", "e", "r", "t", "y", "u", "i", "o", "p"};
+                const char *row_q_u[] = {"Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"};
+                const char *row_a_l[] = {"a", "s", "d", "f", "g", "h", "j", "k", "l", "_"};
+                const char *row_a_u[] = {"A", "S", "D", "F", "G", "H", "J", "K", "L", "_"};
+                const char *row_z_l[] = {"z", "x", "c", "v", "b", "n", "m", "-", ".", "/"};
+                const char *row_z_u[] = {"Z", "X", "C", "V", "B", "N", "M", "-", ".", "/"};
+                const char **row_q = wifi_kbd_shift_ ? row_q_u : row_q_l;
+                const char **row_a = wifi_kbd_shift_ ? row_a_u : row_a_l;
+                const char **row_z = wifi_kbd_shift_ ? row_z_u : row_z_l;
+
+                // 字符行：每个键恒为 key_w，10 个键 + 9 个 gap。
+                // 用 PushID(row) 给每行独立 ID 命名空间：既避免同名字符（如 "_"）跨行撞 ID，
+                // 也让按键 ID 与标签文字解耦。
+                int kbd_row = 0;
+                auto draw_row = [&](const char **keys, int count) {
+                    ImGui::SetCursorPosX(kbd_x);
+                    ImGui::PushID(kbd_row++);
+                    for (int i = 0; i < count; ++i)
+                    {
+                        if (i)
+                            ImGui::SameLine(0.0f, gap);
+                        ImGui::PushID(i);
+                        if (i == 0)
+                            first_key_focus();
+                        if (key_button(keys[i], key_w))
+                            append_char(keys[i][0]);
+                        ImGui::PopID();
+                    }
+                    ImGui::PopID();
+                };
+                draw_row(row_num, cols);
+                draw_row(row_sym, cols);
+                draw_row(row_q,   cols);
+                draw_row(row_a,   cols);
+                draw_row(row_z,   cols);
+
+                // 功能行：5 个键，系数和 10.0 → 总宽与上面 5 行严格相等。
+                //   1.9 + 2.6 + 1.7 + 1.7 + 2.1 = 10.0
+                ImGui::SetCursorPosX(kbd_x);
+                ImGui::PushID("kbd_fn");
+                const float fn_w[] = {1.9f, 2.6f, 1.7f, 1.7f, 2.1f};
+                // 每键宽 = 系数*u - gap（SameLine 已补 gap，减掉才不会累积偏宽）
+                auto fn_width = [&](int i) { return fn_w[i] * u - gap; };
+
+                ImGui::PushID(0);
+                if (key_button(wifi_kbd_shift_ ? "SHIFT*" : "SHIFT", fn_width(0)))
+                    wifi_kbd_shift_ = !wifi_kbd_shift_;
+                ImGui::PopID();
+
+                ImGui::SameLine(0.0f, gap);
+                ImGui::PushID(1);
+                if (key_button("SPACE", fn_width(1)))
+                    append_char(' ');
+                ImGui::PopID();
+
+                ImGui::SameLine(0.0f, gap);
+                ImGui::PushID(2);
+                if (key_button("DEL", fn_width(2)))
+                    backspace_char();
+                ImGui::PopID();
+
+                ImGui::SameLine(0.0f, gap);
+                ImGui::PushID(3);
+                bool kbd_clear = key_button("CLR", fn_width(3));
+                if (kbd_clear)
+                    wifi_client_password_[0] = '\0';
+                ImGui::PopID();
+
+                ImGui::SameLine(0.0f, gap);
+                ImGui::PushID(4);
+                bool kbd_done = key_button(is_cn ? "\u5b8c\u6210" : "DONE", fn_width(4));
+                ImGui::PopID();
+                ImGui::PopID(); // "kbd_fn"
+
+                // 键盘外框：把整块键盘圈成一个整体，避免看起来是散落的按钮。
+                // 用最后一个键的矩形下沿 + 起点的上沿/左沿求包围盒；1px 描边画在最上层，
+                // 只沿边缘走线，不会遮挡按键内容。
+                {
+                    const ImVec2 kbd_end = ImGui::GetItemRectMax();
+                    const float pad = 6.0f * dm.k;
+                    ImGui::GetWindowDrawList()->AddRect(
+                        ImVec2(kbd_screen0.x - pad, kbd_screen0.y - pad),
+                        ImVec2(kbd_end.x + pad, kbd_end.y + pad),
+                        ui::kAmberLine, 0.0f, 0, 1.0f);
+                }
 
                 ImGui::Spacing();
                 ImGui::Separator();
                 ImGui::Spacing();
 
-                if (primary_button(is_cn ? "\u8fde\u63a5" : "Connect") || enter)
+                // 底部仍保留连接按钮，供习惯鼠标/原生导航的用户使用。
+                // 底部三键也按 kbd_w 铺满，与密码框、软键盘左右边界完全对齐。
+                // 3 键 + 2 个 gap = kbd_w  =>  三键宽之和 = kbd_w - 2*gap，按 4:3:3 分配。
+                const float btns_w    = kbd_w - 2.0f * gap;
+                const float w_connect = btns_w * 0.4f;
+                const float w_back    = btns_w * 0.3f;
+                const float w_cancel  = btns_w - w_connect - w_back;
+                bool do_connect = primary_button(is_cn ? "\u8fde\u63a5" : "Connect", true,
+                                                 w_connect) || kbd_done;
+                if (do_connect)
                 {
                     wifi_has_result_ = false;
                     wifi_result_msg_.clear();
                     wifi_step_ = 3;
                     wifi_.StartConnect(wifi_client_ssid_, wifi_client_password_, wifi_.Iface());
                 }
-                ImGui::SameLine();
-                if (ghost_button(is_cn ? "\u4e0a\u4e00\u6b65" : "Back"))
+                ImGui::SameLine(0.0f, gap);
+                if (ghost_button(is_cn ? "\u4e0a\u4e00\u6b65" : "Back", w_back))
                     wifi_step_ = 1;
-                ImGui::SameLine();
-                if (ghost_button(is_cn ? "\u53d6\u6d88" : "Cancel"))
+                ImGui::SameLine(0.0f, gap);
+                if (ghost_button(is_cn ? "\u53d6\u6d88" : "Cancel", w_cancel))
                 {
                     wifi_step_ = 0;
                     ImGui::CloseCurrentPopup();
@@ -2129,9 +2356,13 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                     ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "%s",
                         is_cn ? "\u6b63\u5728\u8fde\u63a5..." : "Connecting...");
                     ImGui::Spacing();
-                    ImGui::TextDisabled("%s", is_cn
-                        ? "\u6b63\u5728\u901a\u77e5 ConnMan \u8fde\u63a5\u70ed\u70b9\u5e76\u7b49\u5f85 DHCP\uff0c\u6700\u591a 30 \u79d2"
-                        : "Asking ConnMan to connect and waiting for DHCP (up to 30s)");
+                    // 与 ConnMan 的实际状态同步：定位 / 提交 / 关联 / 取地址，带已用秒数。
+                    const std::string wifi_progress = WifiController::ConnectProgress();
+                    ImGui::TextDisabled("%s", wifi_progress.empty()
+                        ? (is_cn
+                            ? "\u6b63\u5728\u5411 ConnMan \u63d0\u4ea4\u8fde\u63a5\u8bf7\u6c42"
+                            : "Submitting the connection request to ConnMan")
+                        : wifi_progress.c_str());
                 }
                 else if (wifi_result_ok_)
                 {
@@ -2161,7 +2392,7 @@ void MenuRenderer::DrawMenu(const ImGuiViewport *viewport, bool &running_flag)
                 {
                     wifi_step_ = 2;
                     wifi_has_result_ = false;
-                    wifi_pwd_focus_ = 1;
+                    wifi_kbd_pending_focus_ = 1; // 重试回到密码页，同样把焦点交给软键盘
                 }
                 else if (choice == 2)
                 {

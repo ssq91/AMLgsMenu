@@ -105,6 +105,10 @@ private:
     std::function<void()> request_reboot_;
     std::function<bool(const std::string &, const std::string &)> apply_wifi_client_;
     char wifi_client_ssid_[128]{};
+    // 软键盘状态：SHIFT 切换与“进入密码页后把焦点交给首键”的一次性标记
+    bool wifi_kbd_shift_ = false;
+    int wifi_kbd_pending_focus_ = 0;
+
     char wifi_client_password_[128]{};
 
     // ---- Wi-Fi 连接流程（选网卡 -> 扫描 -> 选 AP -> 输密码 -> 连接）----
@@ -123,7 +127,6 @@ private:
     bool wifi_has_result_ = false;
     float wifi_status_timer_ = 0.0f;
     WifiStatus wifi_live_status_{};
-    int wifi_pwd_focus_ = 0;
     int pending_focus_index_ = -1;
     // ---- 贴边布局状态 ----
     int rail_group_ = 0;                                // 当前分组 0..4
